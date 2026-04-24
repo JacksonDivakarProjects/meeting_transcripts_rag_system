@@ -9,26 +9,21 @@ services:
     environment:
       - GROQ_API_KEY=${GROQ_API_KEY}
       - GROQ_MODEL=${GROQ_MODEL}
-      # Optional: reuse the HF cache across container restarts (persistent volume)
       - HF_HOME=/app/.cache/huggingface
     volumes:
       - ./meetingbank_vector_db:/app/meetingbank_vector_db
-      - ./meetings.db:/app/meetings.db
-      # Uncomment the next line if you want to persist the zero‑shot model across container rebuilds
-      # - ./hf_cache:/app/.cache/huggingface
+      - ./whoosh_cache:/app/whoosh_cache
     restart: unless-stopped
 
-  streamlit:
-    image: python:3.10-slim
-    container_name: meeting_rag_ui
-    working_dir: /app
+  react:
+    build: ./frontend
+    container_name: meeting_rag_react
     ports:
-      - "8501:8501"
-    command: bash -c "pip install streamlit requests && streamlit run streamlit_ui.py --server.port 8501 --server.address 0.0.0.0"
+      - "3000:3000"
     volumes:
-      - ./streamlit_ui.py:/app/streamlit_ui.py
-    environment:
-      - API_URL=http://fastapi:8000
+      - ./frontend/src:/app/src            # Hot-reloading for React code
+      - ./frontend/index.html:/app/index.html
+      - ./frontend/vite.config.js:/app/vite.config.js
     depends_on:
       - fastapi
     restart: unless-stopped
