@@ -1,0 +1,17 @@
+fastapi
+uvicorn
+langchain-groq
+langchain-classic
+langchain-community
+langchain-huggingface
+langchain-chroma
+chromadb
+sentence-transformers
+streamlit
+requests
+pydantic
+python-dotenv
+transformers
+rank-bm25
+torch
+whoosh
