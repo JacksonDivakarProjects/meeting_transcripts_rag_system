@@ -1,0 +1,53 @@
+# Python cache
+__pycache__/
+*.py[cod]
+*.so
+.Python
+
+# Virtual environment
+.venv/
+venv/
+ENV/
+env/
+
+# Environment variables (sensitive)
+.env
+.env.local
+
+# Vector store (large binary data)
+meetingbank_vector_db/
+whoosh_cache/
+
+# SQLite database
+*.db
+*.sqlite3
+
+# IDE / editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Streamlit cache
+.streamlit/
+.cache/
+
+# Logs and temporary files
+*.log
+*.tmp
+.DS_Store
+Thumbs.db
+
+# Docker (optional – you may want to keep these, but typically ignore)
+# *.dockerignore
+
+# Jupyter notebook checkpoints
+.ipynb_checkpoints/
+
+# mypy / pytest
+.mypy_cache/
+.pytest_cache/
+
+# Hugging Face cache (if mounted inside project)
+hf_cache/
