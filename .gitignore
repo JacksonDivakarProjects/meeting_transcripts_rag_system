@@ -55,3 +55,7 @@ hf_cache/
 
 data/
 .gitignore
+unsloth_compiled_cache/
+Dataset/
+
+node_modules/
