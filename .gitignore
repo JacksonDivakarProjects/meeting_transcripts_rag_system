@@ -53,7 +53,11 @@ Thumbs.db
 hf_cache/
 
 
-data/
+
+*.json
+
+
+
 .gitignore
 unsloth_compiled_cache/
 Dataset/
