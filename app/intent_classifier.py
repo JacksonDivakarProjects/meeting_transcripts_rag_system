@@ -11,7 +11,7 @@ def _get_classifier():
     if _classifier is None:
         _classifier = pipeline(
             "zero-shot-classification",
-            model="facebook/bart-large-mnli",
+            model="valhalla/distilbart-mnli-12-1",
             device=-1,  # -1 = CPU; change to 0 for GPU
         )
     return _classifier

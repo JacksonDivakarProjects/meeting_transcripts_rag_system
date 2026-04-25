@@ -51,3 +51,7 @@ Thumbs.db
 
 # Hugging Face cache (if mounted inside project)
 hf_cache/
+
+
+data/
+.gitignore

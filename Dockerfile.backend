@@ -1,21 +1,70 @@
-# Backend - FastAPI
+# ---------- Stage 1: builder ----------
+FROM python:3.10-slim AS builder
+
+WORKDIR /app
+
+# System deps
+RUN apt-get update && apt-get install -y gcc g++ && rm -rf /var/lib/apt/lists/*
+
+# Copy requirements
+COPY requirements.txt .
+
+# Install torch (CPU)
+RUN pip install --no-cache-dir \
+    "torch==2.6.0" \
+    --extra-index-url https://download.pytorch.org/whl/cpu
+
+# Install rest
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Re-enforce torch (prevents downgrade)
+RUN pip install --no-cache-dir \
+    "torch==2.6.0" \
+    --extra-index-url https://download.pytorch.org/whl/cpu
+
+# Verify torch version (debug safety)
+RUN python -c "import torch; print('TORCH VERSION:', torch.__version__)"
+
+# Copy project
+COPY . .
+
+# HF cache
+ENV HF_HOME=/hf_cache
+
+# Preload model
+RUN python - <<'PY'
+from transformers import pipeline
+pipeline("zero-shot-classification", model="valhalla/distilbart-mnli-12-1", device=-1)
+PY
+
+# Build Whoosh + Chroma
+RUN python - <<'PY'
+import os
+from app.init_db import build_all
+
+os.environ["WHOOSH_DIR"] = "/app/whoosh_cache"
+os.environ["VECTOR_DB_DIR"] = "/app/meetingbank_vector_db"
+
+build_all()
+PY
+
+
+# ---------- Stage 2: runtime ----------
 FROM python:3.10-slim
 
 WORKDIR /app
 
-# Install system deps (only if needed for builds)
-RUN apt-get update && apt-get install -y gcc g++ && rm -rf /var/lib/apt/lists/*
+# Copy installed packages
+COPY --from=builder /usr/local /usr/local
 
-# Install Python deps first (cache optimized)
-COPY requirements.txt .
-RUN pip install --no-cache-dir --default-timeout=600 -r requirements.txt
+# Copy app + DB + cache
+COPY --from=builder /app /app
+COPY --from=builder /hf_cache /app/.cache/huggingface
 
-# Copy app code
-COPY . .
-
-# Optional HF cache
+# Env paths
 ENV HF_HOME=/app/.cache/huggingface
-RUN mkdir -p /app/.cache/huggingface
+ENV WHOOSH_DIR=/app/whoosh_cache
+ENV VECTOR_DB_DIR=/app/meetingbank_vector_db
 
 EXPOSE 8000
 
