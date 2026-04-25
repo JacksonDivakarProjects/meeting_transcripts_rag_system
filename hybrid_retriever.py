@@ -1,124 +1,140 @@
 # hybrid_retriever.py
 import os
-from typing import List
+from typing import List, Any
 from langchain_core.documents import Document
 from langchain_core.retrievers import BaseRetriever
 from pydantic import Field
-from whoosh.index import create_in, open_dir
+from whoosh.index import create_in, open_dir, exists_in
 from whoosh.fields import Schema, ID, TEXT
 from whoosh.qparser import QueryParser
 
-# Global cache for documents, loaded only once
-_cached_documents = None
+from config import WHOOSH_DIR
 
-def get_cached_documents(vectorstore):
+# Global document cache — loaded only once per process
+_cached_documents: List[Document] = []
+
+
+def get_cached_documents(vectorstore: Any) -> List[Document]:
     global _cached_documents
-    if _cached_documents is None:
+    if not _cached_documents:
         from vector_store import load_all_chunks
-        print("📚 Loading all chunks (cached once)...")
+        print("📚 Loading all chunks into memory (cached once)...")
         _cached_documents = load_all_chunks()
     return _cached_documents
 
 
 class HybridRetriever(BaseRetriever):
-    """
-    Hybrid retriever combining Whoosh (keyword search) and semantic vector search.
-    Index is cached to disk after first build.
-    """
-    vectorstore: any = Field(description="Vector store for semantic search")
+    """Combines Whoosh BM25 keyword search with Chroma semantic search via RRF."""
+
+    vectorstore: Any = Field(description="Chroma vector store for semantic search")
     documents: List[Document] = Field(default_factory=list, description="All document chunks")
-    k: int = Field(default=5, description="Number of documents to retrieve")
-    bm25_weight: float = Field(default=0.3, description="Weight for keyword search")
-    index_dir: str = Field(default="./whoosh_cache", description="Cache directory for Whoosh index")
+    k: int = Field(default=5, description="Final number of documents to return")
+    bm25_weight: float = Field(default=0.3, description="Weight for keyword results (0-1)")
+    index_dir: str = Field(default=WHOOSH_DIR, description="Whoosh index cache directory")
 
     class Config:
         arbitrary_types_allowed = True
 
-    def __init__(self, vectorstore, documents: List[Document], k: int = 5, bm25_weight: float = 0.3, index_dir: str = "./whoosh_cache", **kwargs):
-        # Check if a valid Whoosh index already exists
-        index_exists = False
-        if os.path.exists(index_dir) and any(f.endswith(('.seg', '.toc')) for f in os.listdir(index_dir)):
-            try:
-                # Try to open the index; if successful, it's valid
-                open_dir(index_dir)
-                index_exists = True
-                print(f"📚 Loading existing Whoosh index from {index_dir}...")
-            except Exception as e:
-                print(f"⚠️ Whoosh index at {index_dir} is corrupted, will rebuild. Error: {e}")
-                index_exists = False
+    def __init__(self, vectorstore: Any, documents: List[Document],
+                 k: int = 5, bm25_weight: float = 0.3,
+                 index_dir: str = WHOOSH_DIR, **kwargs):
 
-        if not index_exists:
-            print(f"📚 Building Whoosh index with {len(documents)} documents...")
-            os.makedirs(index_dir, exist_ok=True)
+        os.makedirs(index_dir, exist_ok=True)
+        index = None
+
+        # Try to reuse existing index
+        if exists_in(index_dir):
+            try:
+                index = open_dir(index_dir)
+                print(f"✅ Reusing Whoosh index from {index_dir} ({index.doc_count()} docs).")
+            except Exception as e:
+                print(f"⚠️  Corrupt Whoosh index — rebuilding. ({e})")
+                index = None
+
+        if index is None:
+            print(f"🔨 Building Whoosh index for {len(documents)} documents...")
             schema = Schema(doc_id=ID(stored=True), content=TEXT(stored=True))
             index = create_in(index_dir, schema)
             writer = index.writer()
-            batch_size = 5000
-            total = len(documents)
+            batch_size = 5_000
             for i, doc in enumerate(documents):
                 writer.add_document(doc_id=str(i), content=doc.page_content)
                 if (i + 1) % batch_size == 0:
                     writer.commit()
                     writer = index.writer()
-                    print(f"  Indexed {i+1}/{total} documents...")
+                    print(f"  Indexed {i + 1}/{len(documents)}...")
             writer.commit()
-            print(f"✅ Whoosh index built and cached to {index_dir}")
-        else:
-            index = open_dir(index_dir)
+            print(f"✅ Whoosh index built ({len(documents)} docs).")
 
-        # Initialize base class with declared fields
         super().__init__(
             vectorstore=vectorstore,
             documents=documents,
             k=k,
             bm25_weight=bm25_weight,
             index_dir=index_dir,
-            **kwargs
+            **kwargs,
         )
+        object.__setattr__(self, "_index", index)
 
-        # Store index in a private attribute (bypass Pydantic)
-        object.__setattr__(self, '_index', index)
+    # ------------------------------------------------------------------
+    # Core retrieval logic
+    # ------------------------------------------------------------------
+    def _retrieve(self, query: str) -> List[Document]:
+        fetch = self.k * 3
 
-    def _get_relevant_documents(self, query: str, **kwargs) -> List[Document]:
-        # 1. Whoosh keyword search
-        keyword_results = []
+        # 1. BM25 keyword search via Whoosh
+        keyword_hits: List[tuple] = []
         with self._index.searcher() as searcher:
             parser = QueryParser("content", self._index.schema)
-            q = parser.parse(query)
-            results = searcher.search(q, limit=self.k * 3)
+            try:
+                q = parser.parse(query)
+            except Exception:
+                q = parser.parse(QueryParser.escape(query))
+            results = searcher.search(q, limit=fetch)
             for rank, hit in enumerate(results):
                 doc_id = int(hit["doc_id"])
                 if doc_id < len(self.documents):
-                    keyword_results.append((doc_id, 1.0 / (rank + 1)))
+                    keyword_hits.append((doc_id, 1.0 / (rank + 1)))
 
-        # 2. Vector search (semantic)
-        vector_results = self.vectorstore.similarity_search_with_score(query, k=self.k * 3)
+        # 2. Semantic search via Chroma
+        vector_results = self.vectorstore.similarity_search_with_score(query, k=fetch)
+
+        # Build a page_content → index map for fast lookup
+        content_to_idx = {doc.page_content: i for i, doc in enumerate(self.documents)}
 
         # 3. Reciprocal Rank Fusion
-        combined_scores = {}
-        for doc_id, rank_score in keyword_results:
-            combined_scores[doc_id] = combined_scores.get(doc_id, 0) + self.bm25_weight * rank_score
-        for rank, (doc, _) in enumerate(vector_results):
-            doc_idx = next((i for i, d in enumerate(self.documents) if d.page_content == doc.page_content), None)
-            if doc_idx is not None:
-                combined_scores[doc_idx] = combined_scores.get(doc_idx, 0) + (1 - self.bm25_weight) * (1.0 / (rank + 1))
+        scores: dict = {}
+        for doc_id, rr_score in keyword_hits:
+            scores[doc_id] = scores.get(doc_id, 0.0) + self.bm25_weight * rr_score
 
-        # 4. Get top-k unique, add numbered citation prefixes
-        sorted_indices = sorted(combined_scores.keys(), key=lambda i: combined_scores[i], reverse=True)[:self.k]
-        unique_docs = []
-        seen = set()
+        for rank, (doc, _) in enumerate(vector_results):
+            idx = content_to_idx.get(doc.page_content)
+            if idx is not None:
+                sem_score = (1.0 - self.bm25_weight) * (1.0 / (rank + 1))
+                scores[idx] = scores.get(idx, 0.0) + sem_score
+
+        # 4. Return top-k unique docs with citation prefixes
+        sorted_indices = sorted(scores, key=lambda i: scores[i], reverse=True)
+        unique_docs: List[Document] = []
+        seen: set = set()
         for idx in sorted_indices:
+            if len(unique_docs) >= self.k:
+                break
             doc = self.documents[idx]
             if doc.page_content in seen:
                 continue
             seen.add(doc.page_content)
-            prefix = f"[{len(unique_docs) + 1}] "
-            new_doc = Document(
-                page_content=prefix + doc.page_content,
-                metadata=doc.metadata
+            citation = f"[{len(unique_docs) + 1}] "
+            unique_docs.append(
+                Document(page_content=citation + doc.page_content, metadata=doc.metadata)
             )
-            unique_docs.append(new_doc)
         return unique_docs
 
+    def _get_relevant_documents(self, query: str, **kwargs) -> List[Document]:
+        return self._retrieve(query)
+
     async def _aget_relevant_documents(self, query: str, **kwargs) -> List[Document]:
-        return self._get_relevant_documents(query)
+        # Whoosh is sync; run in thread pool for async callers
+        import asyncio
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, self._retrieve, query)
