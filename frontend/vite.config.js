@@ -5,13 +5,16 @@ export default defineConfig({
   plugins: [react()],
   server: {
     port: 3000,
-    host: '0.0.0.0', // Allow external connections (Docker)
+    host: '0.0.0.0',   // Required for Docker — Vite only binds localhost by default
     proxy: {
       '/query': {
-        // Changed from localhost to 'fastapi' (the docker service name)
-        target: 'http://fastapi:8000', 
+        target: 'http://fastapi:8000',   // Docker service name
         changeOrigin: true,
-      }
-    }
-  }
+      },
+      '/health': {
+        target: 'http://fastapi:8000',
+        changeOrigin: true,
+      },
+    },
+  },
 })

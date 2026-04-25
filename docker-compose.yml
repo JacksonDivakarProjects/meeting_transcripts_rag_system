@@ -1,27 +1,36 @@
-version: '3.8'
+version: "3.9"
 
 services:
   fastapi:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
     container_name: meeting_rag_api
     ports:
       - "8000:8000"
     environment:
       - GROQ_API_KEY=${GROQ_API_KEY}
-      - GROQ_MODEL=${GROQ_MODEL}
-      - HF_HOME=/app/.cache/huggingface
+      - GROQ_MODEL=${GROQ_MODEL:-qwen/qwen3-32b}
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY:-}
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-sentence-transformers/all-MiniLM-L6-v2}
+      - JSON_DIR=/app/data/json_chunks
+      - VECTOR_DB_DIR=/app/meetingbank_vector_db
+      - WHOOSH_DIR=/app/whoosh_cache
     volumes:
+      - ./data/json_chunks:/app/data/json_chunks:ro
       - ./meetingbank_vector_db:/app/meetingbank_vector_db
       - ./whoosh_cache:/app/whoosh_cache
     restart: unless-stopped
 
   react:
-    build: ./frontend
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.frontend
     container_name: meeting_rag_react
     ports:
       - "3000:3000"
     volumes:
-      - ./frontend/src:/app/src            # Hot-reloading for React code
+      - ./frontend/src:/app/src
       - ./frontend/index.html:/app/index.html
       - ./frontend/vite.config.js:/app/vite.config.js
     depends_on:

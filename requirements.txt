@@ -1,10 +1,12 @@
 fastapi
-uvicorn
+uvicorn[standard]
+python-multipart
+langchain
 langchain-groq
-langchain-classic
 langchain-community
 langchain-huggingface
 langchain-chroma
+langgraph
 chromadb
 sentence-transformers
 streamlit

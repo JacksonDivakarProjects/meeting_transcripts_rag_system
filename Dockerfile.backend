@@ -1,0 +1,22 @@
+# Backend - FastAPI
+FROM python:3.10-slim
+
+WORKDIR /app
+
+# Install system deps (only if needed for builds)
+RUN apt-get update && apt-get install -y gcc g++ && rm -rf /var/lib/apt/lists/*
+
+# Install Python deps first (cache optimized)
+COPY requirements.txt .
+RUN pip install --no-cache-dir --default-timeout=600 -r requirements.txt
+
+# Copy app code
+COPY . .
+
+# Optional HF cache
+ENV HF_HOME=/app/.cache/huggingface
+RUN mkdir -p /app/.cache/huggingface
+
+EXPOSE 8000
+
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

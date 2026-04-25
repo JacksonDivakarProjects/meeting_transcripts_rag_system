@@ -22,3 +22,23 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Optional npm cache directory
+.npm
+
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+*.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+/meetingbank_vector_db
+/whoosh_cache
+
+.gitignore
+
+.venv
