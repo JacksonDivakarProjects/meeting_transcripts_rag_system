@@ -27,4 +27,9 @@ services:
       - "3000:3000"
     depends_on:
       - fastapi
+    environment:
+      - API_URL=http://localhost:8000
+    command: >
+      sh -c "echo \"window.API_URL='${API_URL}'\" > /app/dist/config.js
+      && npx serve -s dist -l 3000"
     restart: unless-stopped
