@@ -16,3 +16,4 @@ def build_all():
     HybridRetriever(vectorstore=vectorstore, documents=documents)
 
     print("=== All initialization complete ===")
+    

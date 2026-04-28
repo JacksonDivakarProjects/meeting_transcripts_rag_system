@@ -5,7 +5,7 @@ import './App.css';
 
 const API_URL = import.meta.env.VITE_API_URL;
 
-
+console.log('API URL:', API_URL);
 export default function App() {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');

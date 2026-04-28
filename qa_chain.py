@@ -54,7 +54,7 @@ def get_qa_chain(vectorstore, k: int = 5, hybrid: bool = False, bm25_weight: flo
         bm25_weight: Fraction of score from keyword search (0–1).
     """
     os.environ["GROQ_API_KEY"] = GROQ_API_KEY
-    llm = ChatGroq(model=GROQ_MODEL, temperature=0.0, max_retries=2, timeout=60)
+    llm = ChatGroq(model=GROQ_MODEL, temperature=0.0, top_p=1, max_retries=2, timeout=60)
 
     prompt = PromptTemplate(
         template="""You are a meeting analyst. Answer the user's question using ONLY the provided context.
