@@ -1,17 +1,18 @@
 import json
 import os
 import glob
+import re
 from typing import List
 from langchain_core.documents import Document
 from langchain_chroma import Chroma
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_classic.text_splitter import RecursiveCharacterTextSplitter
-from config import JSON_DIR, VECTOR_DB_DIR, EMBEDDING_MODEL
-
-CHUNK_SIZE = 400
-CHUNK_OVERLAP = 75
+from config import JSON_DIR, VECTOR_DB_DIR, EMBEDDING_MODEL, CHUNK_SIZE, CHUNK_OVERLAP
 
 
+# ---------------------------------------------------------
+# Embeddings
+# ---------------------------------------------------------
 def _get_embeddings():
     return HuggingFaceEmbeddings(
         model_name=EMBEDDING_MODEL,
@@ -21,102 +22,118 @@ def _get_embeddings():
 
 
 # ---------------------------------------------------------
-# Speaker-based merging (CRITICAL FIX)
+# Speaker inference (fallback)
 # ---------------------------------------------------------
-def _merge_speaker_lines(transcripts: list, topic_name: str, meeting_id: str, file_path: str) -> List[Document]:
-    merged_docs = []
-    current_speaker = None
-    buffer = []
+def infer_speaker(text: str) -> str:
+    """
+    Try to extract speaker from patterns like:
+    'John: ...', 'MAYOR: ...'
+    """
+    match = re.match(r"^([A-Z][A-Za-z .'-]{1,40}):", text)
+    if match:
+        return match.group(1).strip()
+    return "Unknown"
+
+
+# ---------------------------------------------------------
+# Timestamp extraction (robust)
+# ---------------------------------------------------------
+def get_timestamp(line: dict) -> str:
+    if "start_s" in line:
+        sec = int(line.get("start_s", 0))
+        m, s = divmod(sec, 60)
+        return f"{m:02d}:{s:02d}"
+
+    if "start_time" in line:
+        return str(line["start_time"])
+
+    if "timestamp" in line:
+        return str(line["timestamp"])
+
+    return "00:00"
+
+
+# ---------------------------------------------------------
+# Core parsing
+# ---------------------------------------------------------
+def _parse_transcript_lines(transcripts: list, topic_name: str, meeting_id: str, file_path: str) -> List[Document]:
+    docs = []
+    seen = set()
 
     for line in transcripts:
         text = line.get("contents", "").strip()
         if not text:
             continue
 
-        # filter noise
-        if len(text) < 10:
+        line_id = line.get("line_id", 0)
+        key = (topic_name, line_id, text)
+
+        if key in seen:
             continue
+        seen.add(key)
 
-        speaker = line.get("speaker", "unknown")
+        # Speaker extraction
+        speaker = line.get("speaker")
+        if not speaker or speaker.lower() == "unknown":
+            speaker = infer_speaker(text)
 
-        if speaker != current_speaker:
-            if buffer:
-                merged_docs.append(" ".join(buffer))
-            buffer = [text]
-            current_speaker = speaker
-        else:
-            buffer.append(text)
-
-    if buffer:
-        merged_docs.append(" ".join(buffer))
-
-    documents = []
-    seen = set()
-
-    for i, content in enumerate(merged_docs):
-        content = content.strip()
-
-        if content in seen:
-            continue
-        seen.add(content)
+        # Timestamp extraction
+        timestamp_str = get_timestamp(line)
 
         metadata = {
             "source_file": os.path.basename(file_path),
             "topic": topic_name,
             "meeting_id": meeting_id,
-            "chunk_id": i,
+            "speaker": speaker,
+            "timestamp_str": timestamp_str,
+            "line_id": line_id,
         }
 
-        documents.append(Document(page_content=content, metadata=metadata))
+        docs.append(Document(page_content=text, metadata=metadata))
 
-    return documents
+    return docs
 
 
 # ---------------------------------------------------------
-# Chunking (controlled)
+# Chunking
 # ---------------------------------------------------------
 def load_and_chunk_one_file(file_path: str) -> List[Document]:
     with open(file_path, "r", encoding="utf-8") as f:
         data = json.load(f)
 
-    documents: List[Document] = []
+    all_lines: List[Document] = []
 
     if "transcripts" in data:
-        topic_name = data.get("topic_name", "Unknown")
+        topic_name = data.get("topic_name", "Unknown Topic")
         meeting_id = data.get("meeting_id", "")
-        documents = _merge_speaker_lines(data["transcripts"], topic_name, meeting_id, file_path)
+        all_lines = _parse_transcript_lines(data["transcripts"], topic_name, meeting_id, file_path)
     else:
         for topic_name, topic_content in data.items():
             if not isinstance(topic_content, dict):
                 continue
             meeting_id = topic_content.get("meeting_id", "")
             transcripts = topic_content.get("transcripts", [])
-            documents.extend(
-                _merge_speaker_lines(transcripts, topic_name, meeting_id, file_path)
-            )
+            all_lines.extend(_parse_transcript_lines(transcripts, topic_name, meeting_id, file_path))
 
-    if not documents:
+    if not all_lines:
         return []
 
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=CHUNK_SIZE,
         chunk_overlap=CHUNK_OVERLAP,
+        separators=["\n\n", "\n", ". ", " ", ""],
+        length_function=len,
     )
 
     chunk_docs = []
 
-    for doc in documents:
+    for i, doc in enumerate(all_lines):
         chunks = splitter.split_text(doc.page_content)
 
         for chunk in chunks:
-            chunk = chunk.strip()
-
-            # remove noise
-            if len(chunk) < 50:
-                continue
-
             meta = doc.metadata.copy()
-            meta["chunk_len"] = len(chunk)
+            meta["chunk_index"] = i
+            meta["chunk_size"] = len(chunk)
 
             chunk_docs.append(Document(page_content=chunk, metadata=meta))
 
@@ -124,12 +141,11 @@ def load_and_chunk_one_file(file_path: str) -> List[Document]:
 
 
 # ---------------------------------------------------------
-# Build vector DB (optimized)
+# Build DB
 # ---------------------------------------------------------
 def build_vector_store() -> Chroma:
     embeddings = _get_embeddings()
 
-    # clear old DB (important to avoid duplicates)
     if os.path.exists(VECTOR_DB_DIR):
         import shutil
         shutil.rmtree(VECTOR_DB_DIR)
@@ -143,8 +159,6 @@ def build_vector_store() -> Chroma:
 
     print(f"Found {len(json_files)} files.")
 
-    total_chunks = 0
-
     for i, file_path in enumerate(json_files, 1):
         print(f"Processing {i}: {os.path.basename(file_path)}")
 
@@ -152,17 +166,13 @@ def build_vector_store() -> Chroma:
 
         if chunks:
             vectorstore.add_documents(chunks)
-            total_chunks += len(chunks)
 
-        if i % 50 == 0:
-            print(f"  → {total_chunks} chunks so far")
-
-    print(f"\nFinal chunk count: {total_chunks}")
+    print(f"\nFinal chunk count: {vectorstore._collection.count()}")
     return vectorstore
 
 
 # ---------------------------------------------------------
-# Load existing DB
+# Load DB
 # ---------------------------------------------------------
 def load_vector_store() -> Chroma:
     embeddings = _get_embeddings()
@@ -175,9 +185,9 @@ def load_vector_store() -> Chroma:
 
 
 # ---------------------------------------------------------
-# Load all chunks (ONCE only)
+# Load all chunks
 # ---------------------------------------------------------
-def load_all_chunks(batch_size: int = 1000) -> List[Document]:
+def load_all_chunks(batch_size: int = 500) -> List[Document]:
     vectorstore = load_vector_store()
 
     all_docs: List[Document] = []

@@ -17,6 +17,7 @@ app.add_middleware(
     allow_origins=["*"],   # Restrict to your domain in production
     allow_methods=["*"],
     allow_headers=["*"],
+    allow_credentials=True
 )
 
 
