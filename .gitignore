@@ -51,3 +51,32 @@ Thumbs.db
 
 # Hugging Face cache (if mounted inside project)
 hf_cache/
+
+
+
+*.json
+
+
+
+.gitignore
+unsloth_compiled_cache/
+Dataset/
+
+node_modules/
+
+fine_tuning_meeting_transcript/Miniconda3-latest-Linux-x86_64.shfine_tuning_meeting_transcript/lora_adapter/*.safetensors
+fine_tuning_meeting_transcript/Miniconda3-latest-Linux-x86_64.sh
+
+*.safetensors
+*.safetensors.index
+*.safetensors.json
+*.safetensors.meta
+*.safetensors.cache
+*.safetensors.tmp
+*.safetensors.bak
+*.safetensors.old
+*.safetensors.backup
+*.safetensors.log
+*.sh
+
+adapter_model.safetensors

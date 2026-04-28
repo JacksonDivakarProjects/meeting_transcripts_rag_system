@@ -3,7 +3,8 @@ import ReactMarkdown from 'react-markdown';
 import axios from 'axios';
 import './App.css';
 
-const API_URL = "http://localhost:8000";
+const API_URL = import.meta.env.VITE_API_URL;
+
 
 export default function App() {
   const [messages, setMessages] = useState([]);
