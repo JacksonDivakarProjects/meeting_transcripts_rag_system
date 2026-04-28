@@ -1,5 +1,8 @@
 services:
   fastapi:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
     image: jackdiva/meeting-rag-api:latest
     container_name: meeting_rag_api
     ports:
@@ -15,6 +18,9 @@ services:
     restart: unless-stopped
 
   react:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.frontend
     image: jackdiva/meeting-rag-react:latest
     container_name: meeting_rag_react
     ports:
